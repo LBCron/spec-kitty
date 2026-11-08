@@ -859,7 +859,16 @@ class BookkeepingTransaction(AbstractContextManager["BookkeepingTransaction"]):
                 # PRIMARY ``lanes.json`` being silently redirected onto the
                 # coordination branch (the #3371 add/add root cause). The coord
                 # redirect below is skipped entirely.
-                worktree_root = repo_root
+                #
+                # FR-061 (#7372): before a ``topology_source: default`` Mission
+                # lands, its PRIMARY write ref is its topic branch, which the
+                # coordination worktree holds (the root checkout went back to
+                # ``create_return_branch``). Commit in the non-lane checkout
+                # holding ``destination_ref`` -- the same topic-holder locator
+                # the coordination-less arm above uses; every other mission's
+                # target branch is held by ``repo_root`` (or by no checkout),
+                # so this stays ``repo_root`` for them.
+                worktree_root = _write_branch_holder(repo_root, effective_destination_ref)
             else:
                 # New topology — materialize/seed the coordination write
                 # location on first call (WP07 T039: the single write-location

@@ -212,6 +212,32 @@ def feature_dir_file_paths(repo_root: Path, feature_dir: Path) -> list[str]:
     return paths
 
 
+def planning_checkout_root(repo_root: Path, artifact_source_dir: Path, planning_branch: str) -> Path:
+    """The checkout the planning commit stages from: *repo_root*, or the holder of *planning_branch*.
+
+    FR-061 (#7372): until a ``topology_source: default`` Mission lands, its PRIMARY partition
+    lives on its topic branch, which the coordination worktree holds once the repository root
+    checkout moved back to ``create_return_branch``. The planning-artifact directory then sits in
+    that worktree, so the claim reads ``git status`` there and stages paths relative to it rather
+    than relativizing a ``.worktrees/`` path against the repository root (the #1887 guard in
+    :func:`feature_dir_file_paths` refuses that, and rightly).
+
+    The holder is accepted only when it is a non-lane checkout of *planning_branch* (the same
+    topic-holder probe the status read door and ``commit_router._primary_commit_root`` use) and
+    *artifact_source_dir* lies inside it. Every other shape keeps *repo_root*, so a
+    ``.worktrees/`` directory that is not the planning branch's holder still trips the guard.
+    """
+    from specify_cli.status import non_lane_checkout_holding_branch
+
+    holder: Path | None = non_lane_checkout_holding_branch(repo_root, planning_branch)
+    if holder is None:
+        return repo_root
+    resolved = holder.resolve()
+    if resolved == repo_root.resolve() or not artifact_source_dir.resolve().is_relative_to(resolved):
+        return repo_root
+    return holder
+
+
 def planning_artifact_source_dir(repo_root: Path, feature_dir: Path, mission_slug: str) -> Path:
     """Return the primary-checkout mission dir for planning-artifact discovery."""
     repo_root_resolved = repo_root.resolve()

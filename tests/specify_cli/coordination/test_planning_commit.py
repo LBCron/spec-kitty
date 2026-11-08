@@ -381,3 +381,52 @@ class TestCoordinationFilterWithDeclared:
         placement = planning_commit.PlanningPlacement(resolved=True, ref=CommitTarget(ref="main"))
 
         assert planning_commit.coordination_filter_with_declared(tmp_path, "m", placement, declared_coordination_branch=_COORD_BRANCH) is None
+
+
+class TestPlanningCheckoutRoot:
+    """#7372 / FR-061: the planning commit stages from the checkout holding the planning branch."""
+
+    _TOPIC = "kitty/mission-seam-mission-01KSEAMA"
+
+    def _repo_with_topic_worktree(self, tmp_path: Path) -> tuple[Path, Path]:
+        repo = tmp_path / "repo"
+        _init_repo(repo)
+        _write_meta(repo, dict(_DECLARING_META))
+        _commit_all(repo)
+        holder = repo / ".worktrees" / "seam-mission-coord"
+        git_out(repo, "worktree", "add", "-q", "-b", self._TOPIC, str(holder))
+        return repo, holder
+
+    def test_topic_holder_is_the_checkout_when_the_directory_lies_in_it(self, tmp_path: Path) -> None:
+        repo, holder = self._repo_with_topic_worktree(tmp_path)
+        mission_dir = holder / "kitty-specs" / _SLUG
+        assert planning_commit.planning_checkout_root(repo, mission_dir, self._TOPIC).resolve() == holder.resolve()
+        # ...and the #1887 walk, run against that checkout, stages checkout-relative paths.
+        assert planning_commit.feature_dir_file_paths(holder, mission_dir) == [_META_REL]
+
+    def test_directory_outside_the_holder_keeps_the_repository_root(self, tmp_path: Path) -> None:
+        repo, _holder = self._repo_with_topic_worktree(tmp_path)
+        assert planning_commit.planning_checkout_root(repo, repo / "kitty-specs" / _SLUG, self._TOPIC) == repo
+
+    def test_branch_held_by_the_repository_root_keeps_it(self, tmp_path: Path) -> None:
+        repo, holder = self._repo_with_topic_worktree(tmp_path)
+        assert planning_commit.planning_checkout_root(repo, holder / "kitty-specs" / _SLUG, "work") == repo
+
+    def test_branch_no_checkout_holds_keeps_the_repository_root(self, tmp_path: Path) -> None:
+        repo, holder = self._repo_with_topic_worktree(tmp_path)
+        git_out(repo, "branch", "unheld")
+        assert planning_commit.planning_checkout_root(repo, holder / "kitty-specs" / _SLUG, "unheld") == repo
+
+    def test_lane_worktree_holder_is_never_the_planning_checkout(self, tmp_path: Path) -> None:
+        repo = tmp_path / "repo"
+        _init_repo(repo)
+        _write_meta(repo, dict(_DECLARING_META))
+        _commit_all(repo)
+        lane_branch = f"{self._TOPIC}-lane-a"
+        lane = repo / ".worktrees" / f"{_SLUG}-lane-a"
+        git_out(repo, "worktree", "add", "-q", "-b", lane_branch, str(lane))
+        root = planning_commit.planning_checkout_root(repo, lane / "kitty-specs" / _SLUG, lane_branch)
+        assert root == repo
+        # The guard still refuses the lane directory relative to the repository root.
+        with pytest.raises(SafeCommitPathPolicyError):
+            planning_commit.feature_dir_file_paths(root, lane / "kitty-specs" / _SLUG)
